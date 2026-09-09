@@ -1,34 +1,44 @@
 <?php
 include_once '../includes/auth.php';
-requireLogin();
+requireRole(['admin', 'receptionist']);
+requirePostRequest();
+requireCsrfToken();
 include_once '../config/database.php';
+include_once '../includes/validation.php';
 $conn = getConnection();
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $name = trim($_POST['name'] ?? '');
-    $gender = $_POST['gender'] ?? 'male';
-    $date_of_birth = $_POST['date_of_birth'] ?: null;
-    $phone = trim($_POST['phone'] ?? '');
-    $address = trim($_POST['address'] ?? '');
+$name          = trim($_POST['name'] ?? '');
+$gender        = $_POST['gender'] ?? 'male';
+$date_of_birth = normalizeDate($_POST['date_of_birth'] ?? null);
+$phone         = trim($_POST['phone'] ?? '');
+$address       = trim($_POST['address'] ?? '');
 
-    if (empty($name)) {
-        header("Location: index.php?msg=" . urlencode("اسم المريض مطلوب"));
-        exit;
-    }
+if ($name === '') {
+    redirectTo('/patients/index.php', 'اسم المريض مطلوب', 'warning');
+}
 
-    $query = "INSERT INTO patients (name, gender, date_of_birth, phone, address)
-              VALUES (:name, :gender, :date_of_birth, :phone, :address)";
-    $stmt = $conn->prepare($query);
+if (!in_array($gender, ['male', 'female'], true)) {
+    redirectTo('/patients/index.php', 'قيمة النوع غير صالحة', 'warning');
+}
+
+if (($_POST['date_of_birth'] ?? '') !== '' && $date_of_birth === null) {
+    redirectTo('/patients/index.php', 'تاريخ الميلاد غير صالح', 'warning');
+}
+
+try {
+    $stmt = $conn->prepare(
+        'INSERT INTO patients (name, gender, date_of_birth, phone, address)
+         VALUES (:name, :gender, :date_of_birth, :phone, :address)'
+    );
     $stmt->bindParam(':name', $name);
     $stmt->bindParam(':gender', $gender);
-    $stmt->bindParam(':date_of_birth', $date_of_birth);
+    $stmt->bindValue(':date_of_birth', $date_of_birth, $date_of_birth === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
     $stmt->bindParam(':phone', $phone);
     $stmt->bindParam(':address', $address);
     $stmt->execute();
-
-    header("Location: index.php?msg=" . urlencode("تم إضافة المريض بنجاح"));
-    exit;
+} catch (PDOException $e) {
+    error_log('Patient create failed: ' . $e->getMessage());
+    redirectTo('/patients/index.php', 'تعذّر إضافة المريض', 'danger');
 }
 
-header("Location: index.php");
-exit;
+redirectTo('/patients/index.php', 'تم إضافة المريض بنجاح', 'success');

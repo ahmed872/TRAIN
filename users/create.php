@@ -1,42 +1,52 @@
 <?php
 include_once '../includes/auth.php';
 requireAdmin();
+requirePostRequest();
+requireCsrfToken();
 include_once '../config/database.php';
 $conn = getConnection();
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $username = trim($_POST['username'] ?? '');
-    $password = $_POST['password'] ?? '';
-    $full_name = trim($_POST['full_name'] ?? '');
-    $role = $_POST['role'] ?? 'receptionist';
-    $doctor_id = $_POST['doctor_id'] ?: null;
-    $allowedRoles = ['admin', 'receptionist', 'doctor'];
+$username  = trim($_POST['username'] ?? '');
+$password  = $_POST['password'] ?? '';
+$full_name = trim($_POST['full_name'] ?? '');
+$role      = $_POST['role'] ?? 'receptionist';
+$doctor_id = validId($_POST['doctor_id'] ?? null);
 
-    if (empty($username) || empty($password) || !in_array($role, $allowedRoles, true)) {
-        header("Location: index.php?msg=" . urlencode("اسم المستخدم وكلمة المرور مطلوبين"));
-        exit;
-    }
+$allowedRoles = ['admin', 'receptionist', 'doctor'];
 
-    // تشفير كلمة المرور - أبدًا متخزنش الباسورد كنص عادي
-    $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
+if ($username === '' || $password === '') {
+    redirectTo('/users/index.php', 'اسم المستخدم وكلمة المرور مطلوبين', 'warning');
+}
 
-    $query = "INSERT INTO users (username, password, full_name, role, doctor_id)
-              VALUES (:username, :password, :full_name, :role, :doctor_id)";
-    $stmt = $conn->prepare($query);
+if (!in_array($role, $allowedRoles, true)) {
+    redirectTo('/users/index.php', 'الصلاحية المختارة غير صالحة', 'warning');
+}
+
+if (mb_strlen($username) < 3 || mb_strlen($username) > 50) {
+    redirectTo('/users/index.php', 'اسم المستخدم لازم يكون بين 3 و 50 حرف', 'warning');
+}
+
+if (mb_strlen($password) < 8) {
+    redirectTo('/users/index.php', 'كلمة المرور لازم تكون 8 أحرف على الأقل', 'warning');
+}
+
+// تشفير كلمة المرور - أبدًا متخزنش الباسورد كنص عادي
+$hashedPassword = password_hash($password, PASSWORD_DEFAULT);
+
+try {
+    $stmt = $conn->prepare(
+        'INSERT INTO users (username, password, full_name, role, doctor_id)
+         VALUES (:username, :password, :full_name, :role, :doctor_id)'
+    );
     $stmt->bindParam(':username', $username);
     $stmt->bindParam(':password', $hashedPassword);
     $stmt->bindParam(':full_name', $full_name);
     $stmt->bindParam(':role', $role);
-    $stmt->bindParam(':doctor_id', $doctor_id);
-
-    try {
-        $stmt->execute();
-        header("Location: index.php?msg=" . urlencode("تم إضافة المستخدم بنجاح"));
-    } catch (PDOException $e) {
-        header("Location: index.php?msg=" . urlencode("اسم المستخدم موجود بالفعل"));
-    }
-    exit;
+    $stmt->bindValue(':doctor_id', $doctor_id, $doctor_id === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+    $stmt->execute();
+} catch (PDOException $e) {
+    error_log('User create failed: ' . $e->getMessage());
+    redirectTo('/users/index.php', 'اسم المستخدم موجود بالفعل', 'danger');
 }
 
-header("Location: index.php");
-exit;
+redirectTo('/users/index.php', 'تم إضافة المستخدم بنجاح', 'success');

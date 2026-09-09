@@ -5,107 +5,110 @@ include_once '../config/database.php';
 $conn = getConnection();
 
 // جلب الأطباء مع اسم القسم بتاعهم (JOIN)
-$query = "SELECT doctors.*, departments.name AS department_name
-          FROM doctors
-          LEFT JOIN departments ON doctors.department_id = departments.id
-          ORDER BY doctors.id DESC";
-$stmt = $conn->prepare($query);
+$stmt = $conn->prepare(
+    'SELECT doctors.*, departments.name AS department_name
+     FROM doctors
+     LEFT JOIN departments ON doctors.department_id = departments.id
+     ORDER BY doctors.id DESC'
+);
 $stmt->execute();
 $doctors = $stmt->fetchAll();
 
 // جلب الأقسام عشان القائمة المنسدلة في مودال الإضافة
-$deptStmt = $conn->prepare("SELECT * FROM departments ORDER BY name");
+$deptStmt = $conn->prepare('SELECT id, name FROM departments ORDER BY name');
 $deptStmt->execute();
 $departments = $deptStmt->fetchAll();
+
+$canManage = in_array(currentRole(), ['admin', 'receptionist'], true);
 
 include_once '../includes/header.php';
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
-    <h3>Doctors</h3>
-    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal">
-        + Add Doctor
-    </button>
+    <h3>الأطباء</h3>
+    <?php if ($canManage): ?>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal">+ إضافة طبيب</button>
+    <?php endif; ?>
 </div>
 
-<?php if (isset($_GET['msg'])): ?>
-    <div class="alert alert-info"><?= htmlspecialchars($_GET['msg']) ?></div>
-<?php endif; ?>
-
-<table class="table table-bordered table-striped bg-white">
+<table class="table table-bordered table-striped bg-white align-middle">
     <thead class="table-dark">
         <tr>
             <th>#</th>
-            <th>Name</th>
-            <th>Specialization</th>
-            <th>Department</th>
-            <th>Phone</th>
-            <th>Actions</th>
+            <th>الاسم</th>
+            <th>التخصص</th>
+            <th>القسم</th>
+            <th>الهاتف</th>
+            <?php if ($canManage): ?><th>إجراءات</th><?php endif; ?>
         </tr>
     </thead>
     <tbody>
         <?php if (empty($doctors)): ?>
             <tr>
-                <td colspan="6" class="text-center">No doctors have been added yet.</td>
+                <td colspan="<?= $canManage ? 6 : 5 ?>" class="text-center">لا يوجد أطباء مضافون حتى الآن.</td>
             </tr>
         <?php endif; ?>
         <?php foreach ($doctors as $doc): ?>
             <tr>
-                <td><?= $doc['id'] ?></td>
+                <td><?= (int) $doc['id'] ?></td>
                 <td><?= htmlspecialchars($doc['name']) ?></td>
-                <td><?= htmlspecialchars($doc['specialization']) ?></td>
+                <td><?= htmlspecialchars((string) $doc['specialization']) ?></td>
                 <td><?= htmlspecialchars($doc['department_name'] ?? '—') ?></td>
-                <td><?= htmlspecialchars($doc['phone']) ?></td>
-                <td>
-                    <a href="update.php?id=<?= $doc['id'] ?>" class="btn btn-sm btn-warning">Edit</a>
-                    <a href="delete.php?id=<?= $doc['id'] ?>" class="btn btn-sm btn-danger"
-                        onclick="return confirm('Are you sure you want to delete this doctor?')">Delete</a>
-                </td>
+                <td><?= htmlspecialchars((string) $doc['phone']) ?></td>
+                <?php if ($canManage): ?>
+                    <td>
+                        <a href="update.php?id=<?= (int) $doc['id'] ?>" class="btn btn-sm btn-warning">تعديل</a>
+                        <?= deleteButton('delete.php', (int) $doc['id'], 'هل أنت متأكد من حذف هذا الطبيب؟') ?>
+                    </td>
+                <?php endif; ?>
             </tr>
         <?php endforeach; ?>
     </tbody>
 </table>
 
-<!-- Modal الإضافة -->
-<div class="modal fade" id="addModal" tabindex="-1">
-    <div class="modal-dialog">
-        <form action="create.php" method="POST" class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Add Doctor</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <div class="mb-3">
-                    <label class="form-label">Doctor Name</label>
-                    <input type="text" name="name" class="form-control" required>
+<?php if ($canManage): ?>
+    <!-- Modal الإضافة -->
+    <div class="modal fade" id="addModal" tabindex="-1">
+        <div class="modal-dialog">
+            <form action="create.php" method="POST" class="modal-content">
+                <?= csrfField() ?>
+                <div class="modal-header">
+                    <h5 class="modal-title">إضافة طبيب</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">Specialization</label>
-                    <input type="text" name="specialization" class="form-control">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">اسم الطبيب</label>
+                        <input type="text" name="name" class="form-control" maxlength="100" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">التخصص</label>
+                        <input type="text" name="specialization" class="form-control" maxlength="100">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">القسم</label>
+                        <select name="department_id" class="form-select">
+                            <option value="">-- اختر القسم --</option>
+                            <?php foreach ($departments as $dept): ?>
+                                <option value="<?= (int) $dept['id'] ?>"><?= htmlspecialchars($dept['name']) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">الهاتف</label>
+                        <input type="text" name="phone" class="form-control" maxlength="20">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">البريد الإلكتروني</label>
+                        <input type="email" name="email" class="form-control" maxlength="100">
+                    </div>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">Department</label>
-                    <select name="department_id" class="form-select">
-                        <option value="">-- Select Department --</option>
-                        <?php foreach ($departments as $dept): ?>
-                            <option value="<?= $dept['id'] ?>"><?= htmlspecialchars($dept['name']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
+                <div class="modal-footer">
+                    <button type="submit" class="btn btn-primary">حفظ</button>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">Phone</label>
-                    <input type="text" name="phone" class="form-control">
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Email</label>
-                    <input type="email" name="email" class="form-control">
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="submit" class="btn btn-primary">Save</button>
-            </div>
-        </form>
+            </form>
+        </div>
     </div>
-</div>
+<?php endif; ?>
 
 <?php include_once '../includes/footer.php'; ?>

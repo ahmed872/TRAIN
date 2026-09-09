@@ -1,96 +1,109 @@
 <?php
 include_once '../includes/auth.php';
-requireLogin();
+requireRole(['admin', 'receptionist']);
 include_once '../config/database.php';
+include_once '../includes/validation.php';
 $conn = getConnection();
 
-$id = $_GET['id'] ?? $_POST['id'] ?? null;
+$id = validId($_GET['id'] ?? $_POST['id'] ?? null);
 
-if (!$id) {
-    header("Location: index.php?msg=" . urlencode("لم يتم تحديد المريض"));
-    exit;
+if ($id === null) {
+    redirectTo('/patients/index.php', 'لم يتم تحديد المريض', 'warning');
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $name = trim($_POST['name'] ?? '');
-    $gender = $_POST['gender'] ?? 'male';
-    $date_of_birth = $_POST['date_of_birth'] ?: null;
-    $phone = trim($_POST['phone'] ?? '');
-    $address = trim($_POST['address'] ?? '');
+    requireCsrfToken();
 
-    if (empty($name)) {
-        header("Location: update.php?id=$id&msg=" . urlencode("اسم المريض مطلوب"));
-        exit;
+    $name          = trim($_POST['name'] ?? '');
+    $gender        = $_POST['gender'] ?? 'male';
+    $date_of_birth = normalizeDate($_POST['date_of_birth'] ?? null);
+    $phone         = trim($_POST['phone'] ?? '');
+    $address       = trim($_POST['address'] ?? '');
+
+    if ($name === '') {
+        redirectTo('/patients/update.php?id=' . $id, 'اسم المريض مطلوب', 'warning');
     }
 
-    $query = "UPDATE patients SET name = :name, gender = :gender, date_of_birth = :date_of_birth,
-              phone = :phone, address = :address WHERE id = :id";
-    $stmt = $conn->prepare($query);
-    $stmt->bindParam(':name', $name);
-    $stmt->bindParam(':gender', $gender);
-    $stmt->bindParam(':date_of_birth', $date_of_birth);
-    $stmt->bindParam(':phone', $phone);
-    $stmt->bindParam(':address', $address);
-    $stmt->bindParam(':id', $id);
-    $stmt->execute();
+    if (!in_array($gender, ['male', 'female'], true)) {
+        redirectTo('/patients/update.php?id=' . $id, 'قيمة النوع غير صالحة', 'warning');
+    }
 
-    header("Location: index.php?msg=" . urlencode("تم تعديل بيانات المريض بنجاح"));
-    exit;
+    if (($_POST['date_of_birth'] ?? '') !== '' && $date_of_birth === null) {
+        redirectTo('/patients/update.php?id=' . $id, 'تاريخ الميلاد غير صالح', 'warning');
+    }
+
+    try {
+        $stmt = $conn->prepare(
+            'UPDATE patients SET name = :name, gender = :gender, date_of_birth = :date_of_birth,
+             phone = :phone, address = :address WHERE id = :id'
+        );
+        $stmt->bindParam(':name', $name);
+        $stmt->bindParam(':gender', $gender);
+        $stmt->bindValue(':date_of_birth', $date_of_birth, $date_of_birth === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+        $stmt->bindParam(':phone', $phone);
+        $stmt->bindParam(':address', $address);
+        $stmt->bindValue(':id', $id, PDO::PARAM_INT);
+        $stmt->execute();
+    } catch (PDOException $e) {
+        error_log('Patient update failed: ' . $e->getMessage());
+        redirectTo('/patients/update.php?id=' . $id, 'تعذّر حفظ التعديل', 'danger');
+    }
+
+    redirectTo('/patients/index.php', 'تم تعديل بيانات المريض بنجاح', 'success');
 }
 
-$stmt = $conn->prepare("SELECT * FROM patients WHERE id = :id");
-$stmt->bindParam(':id', $id);
+$stmt = $conn->prepare('SELECT * FROM patients WHERE id = :id');
+$stmt->bindValue(':id', $id, PDO::PARAM_INT);
 $stmt->execute();
 $patient = $stmt->fetch();
 
 if (!$patient) {
-    header("Location: index.php?msg=" . urlencode("المريض غير موجود"));
-    exit;
+    redirectTo('/patients/index.php', 'المريض غير موجود', 'warning');
 }
 
 include_once '../includes/header.php';
 ?>
 
-<h3>Edit Patient: <?= htmlspecialchars($patient['name']) ?></h3>
-
-<?php if (isset($_GET['msg'])): ?>
-    <div class="alert alert-warning"><?= htmlspecialchars($_GET['msg']) ?></div>
-<?php endif; ?>
+<h3>تعديل بيانات المريض: <?= htmlspecialchars($patient['name']) ?></h3>
 
 <form action="update.php" method="POST" class="bg-white p-4 rounded shadow-sm">
-    <input type="hidden" name="id" value="<?= $patient['id'] ?>">
+    <?= csrfField() ?>
+    <input type="hidden" name="id" value="<?= (int) $patient['id'] ?>">
 
     <div class="mb-3">
-        <label class="form-label">Patient Name</label>
-        <input type="text" name="name" class="form-control" value="<?= htmlspecialchars($patient['name']) ?>" required>
+        <label class="form-label">اسم المريض</label>
+        <input type="text" name="name" class="form-control" maxlength="100"
+            value="<?= htmlspecialchars($patient['name']) ?>" required>
     </div>
 
     <div class="mb-3">
-        <label class="form-label">Gender</label>
+        <label class="form-label">النوع</label>
         <select name="gender" class="form-select" required>
-            <option value="male" <?= $patient['gender'] === 'male' ? 'selected' : '' ?>>Male</option>
-            <option value="female" <?= $patient['gender'] === 'female' ? 'selected' : '' ?>>Female</option>
+            <option value="male" <?= $patient['gender'] === 'male' ? 'selected' : '' ?>>ذكر</option>
+            <option value="female" <?= $patient['gender'] === 'female' ? 'selected' : '' ?>>أنثى</option>
         </select>
     </div>
 
     <div class="mb-3">
-        <label class="form-label">Date of Birth</label>
-        <input type="date" name="date_of_birth" class="form-control"
-            value="<?= htmlspecialchars($patient['date_of_birth']) ?>">
+        <label class="form-label">تاريخ الميلاد</label>
+        <input type="date" name="date_of_birth" class="form-control" max="<?= date('Y-m-d') ?>"
+            value="<?= htmlspecialchars((string) $patient['date_of_birth']) ?>">
     </div>
 
     <div class="mb-3">
-        <label class="form-label">Phone</label>
-        <input type="text" name="phone" class="form-control" value="<?= htmlspecialchars($patient['phone']) ?>">
+        <label class="form-label">الهاتف</label>
+        <input type="text" name="phone" class="form-control" maxlength="20"
+            value="<?= htmlspecialchars((string) $patient['phone']) ?>">
     </div>
 
     <div class="mb-3">
-        <label class="form-label">Address</label>
-        <input type="text" name="address" class="form-control" value="<?= htmlspecialchars($patient['address']) ?>">
+        <label class="form-label">العنوان</label>
+        <input type="text" name="address" class="form-control" maxlength="255"
+            value="<?= htmlspecialchars((string) $patient['address']) ?>">
     </div>
 
-    <button type="submit" class="btn btn-primary">Save Changes</button>
-    <a href="index.php" class="btn btn-secondary">Cancel</a>
+    <button type="submit" class="btn btn-primary">حفظ التعديلات</button>
+    <a href="index.php" class="btn btn-secondary">إلغاء</a>
 </form>
 
 <?php include_once '../includes/footer.php'; ?>

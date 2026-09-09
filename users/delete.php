@@ -1,19 +1,49 @@
 <?php
 include_once '../includes/auth.php';
 requireAdmin();
+requirePostRequest();
+requireCsrfToken();
 include_once '../config/database.php';
 $conn = getConnection();
 
-$id = $_GET['id'] ?? null;
+$id = validId($_POST['id'] ?? null);
 
-if (!$id) {
-    header("Location: index.php?msg=" . urlencode("لم يتم تحديد المستخدم"));
-    exit;
+if ($id === null) {
+    redirectTo('/users/index.php', 'لم يتم تحديد المستخدم', 'warning');
 }
 
-$stmt = $conn->prepare("DELETE FROM users WHERE id = :id");
-$stmt->bindParam(':id', $id);
-$stmt->execute();
+// الأدمن ما يقدرش يحذف حساب نفسه ويقفل على نفسه بره النظام
+if ($id === (int) $_SESSION['user_id']) {
+    redirectTo('/users/index.php', 'لا يمكنك حذف حسابك الشخصي', 'danger');
+}
 
-header("Location: index.php?msg=" . urlencode("تم حذف المستخدم بنجاح"));
-exit;
+$roleStmt = $conn->prepare('SELECT role FROM users WHERE id = :id');
+$roleStmt->bindValue(':id', $id, PDO::PARAM_INT);
+$roleStmt->execute();
+$target = $roleStmt->fetch();
+
+if (!$target) {
+    redirectTo('/users/index.php', 'المستخدم غير موجود', 'warning');
+}
+
+// ولا يقدر يحذف آخر أدمن باقي في النظام
+if ($target['role'] === 'admin') {
+    $countStmt = $conn->prepare("SELECT COUNT(*) AS total FROM users WHERE role = 'admin' AND id != :id");
+    $countStmt->bindValue(':id', $id, PDO::PARAM_INT);
+    $countStmt->execute();
+
+    if ((int) $countStmt->fetch()['total'] === 0) {
+        redirectTo('/users/index.php', 'لا يمكن حذف آخر مدير في النظام', 'danger');
+    }
+}
+
+try {
+    $stmt = $conn->prepare('DELETE FROM users WHERE id = :id');
+    $stmt->bindValue(':id', $id, PDO::PARAM_INT);
+    $stmt->execute();
+} catch (PDOException $e) {
+    error_log('User delete failed: ' . $e->getMessage());
+    redirectTo('/users/index.php', 'تعذّر حذف المستخدم', 'danger');
+}
+
+redirectTo('/users/index.php', 'تم حذف المستخدم بنجاح', 'success');

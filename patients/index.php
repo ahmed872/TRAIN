@@ -1,100 +1,103 @@
 <?php
 include_once '../includes/auth.php';
-requireLogin();
+requireRole(['admin', 'receptionist', 'doctor']);
 include_once '../config/database.php';
 $conn = getConnection();
 
-$query = "SELECT * FROM patients ORDER BY id DESC";
-$stmt = $conn->prepare($query);
+$stmt = $conn->prepare('SELECT * FROM patients ORDER BY id DESC');
 $stmt->execute();
 $patients = $stmt->fetchAll();
+
+$canManage = in_array(currentRole(), ['admin', 'receptionist'], true);
+
+$genderLabels = ['male' => 'ذكر', 'female' => 'أنثى'];
 
 include_once '../includes/header.php';
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
-    <h3>Patients</h3>
-    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal">
-        + Add Patient
-    </button>
+    <h3>المرضى</h3>
+    <?php if ($canManage): ?>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal">+ إضافة مريض</button>
+    <?php endif; ?>
 </div>
 
-<?php if (isset($_GET['msg'])): ?>
-    <div class="alert alert-info"><?= htmlspecialchars($_GET['msg']) ?></div>
-<?php endif; ?>
-
-<table class="table table-bordered table-striped bg-white">
+<table class="table table-bordered table-striped bg-white align-middle">
     <thead class="table-dark">
         <tr>
             <th>#</th>
-            <th>Name</th>
-            <th>Gender</th>
-            <th>Date of Birth</th>
-            <th>Phone</th>
-            <th>Actions</th>
+            <th>الاسم</th>
+            <th>النوع</th>
+            <th>تاريخ الميلاد</th>
+            <th>الهاتف</th>
+            <?php if ($canManage): ?><th>إجراءات</th><?php endif; ?>
         </tr>
     </thead>
     <tbody>
         <?php if (empty($patients)): ?>
             <tr>
-                <td colspan="6" class="text-center">No patients have been added yet.</td>
+                <td colspan="<?= $canManage ? 6 : 5 ?>" class="text-center">لا يوجد مرضى مضافون حتى الآن.</td>
             </tr>
         <?php endif; ?>
         <?php foreach ($patients as $p): ?>
             <tr>
-                <td><?= $p['id'] ?></td>
+                <td><?= (int) $p['id'] ?></td>
                 <td><?= htmlspecialchars($p['name']) ?></td>
-                <td><?= $p['gender'] === 'male' ? 'Male' : 'Female' ?></td>
-                <td><?= htmlspecialchars($p['date_of_birth']) ?></td>
-                <td><?= htmlspecialchars($p['phone']) ?></td>
-                <td>
-                    <a href="update.php?id=<?= $p['id'] ?>" class="btn btn-sm btn-warning">Edit</a>
-                    <a href="delete.php?id=<?= $p['id'] ?>" class="btn btn-sm btn-danger"
-                        onclick="return confirm('Are you sure you want to delete this patient?')">Delete</a>
-                </td>
+                <td><?= htmlspecialchars($genderLabels[$p['gender']] ?? '—') ?></td>
+                <td><?= htmlspecialchars((string) $p['date_of_birth']) ?></td>
+                <td><?= htmlspecialchars((string) $p['phone']) ?></td>
+                <?php if ($canManage): ?>
+                    <td>
+                        <a href="update.php?id=<?= (int) $p['id'] ?>" class="btn btn-sm btn-warning">تعديل</a>
+                        <?= deleteButton('delete.php', (int) $p['id'], 'هل أنت متأكد من حذف هذا المريض؟') ?>
+                    </td>
+                <?php endif; ?>
             </tr>
         <?php endforeach; ?>
     </tbody>
 </table>
 
-<!-- Modal الإضافة -->
-<div class="modal fade" id="addModal" tabindex="-1">
-    <div class="modal-dialog">
-        <form action="create.php" method="POST" class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Add Patient</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <div class="mb-3">
-                    <label class="form-label">Patient Name</label>
-                    <input type="text" name="name" class="form-control" required>
+<?php if ($canManage): ?>
+    <!-- Modal الإضافة -->
+    <div class="modal fade" id="addModal" tabindex="-1">
+        <div class="modal-dialog">
+            <form action="create.php" method="POST" class="modal-content">
+                <?= csrfField() ?>
+                <div class="modal-header">
+                    <h5 class="modal-title">إضافة مريض</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">Gender</label>
-                    <select name="gender" class="form-select" required>
-                        <option value="male">Male</option>
-                        <option value="female">Female</option>
-                    </select>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">اسم المريض</label>
+                        <input type="text" name="name" class="form-control" maxlength="100" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">النوع</label>
+                        <select name="gender" class="form-select" required>
+                            <option value="male">ذكر</option>
+                            <option value="female">أنثى</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">تاريخ الميلاد</label>
+                        <input type="date" name="date_of_birth" class="form-control" max="<?= date('Y-m-d') ?>">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">الهاتف</label>
+                        <input type="text" name="phone" class="form-control" maxlength="20">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">العنوان</label>
+                        <input type="text" name="address" class="form-control" maxlength="255">
+                    </div>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">Date of Birth</label>
-                    <input type="date" name="date_of_birth" class="form-control">
+                <div class="modal-footer">
+                    <button type="submit" class="btn btn-primary">حفظ</button>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">Phone</label>
-                    <input type="text" name="phone" class="form-control">
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Address</label>
-                    <input type="text" name="address" class="form-control">
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="submit" class="btn btn-primary">Save</button>
-            </div>
-        </form>
+            </form>
+        </div>
     </div>
-</div>
+<?php endif; ?>
 
 <?php include_once '../includes/footer.php'; ?>

@@ -1,9 +1,9 @@
 <?php
-session_start();
+include_once __DIR__ . '/includes/auth.php';
 
 if (isset($_SESSION['user_id'])) {
-    header("Location: /hospital-system/departments/index.php");
+    header('Location: ' . url('/departments/index.php'));
 } else {
-    header("Location: /hospital-system/auth/login.php");
+    header('Location: ' . url('/auth/login.php'));
 }
 exit;

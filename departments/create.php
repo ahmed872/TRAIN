@@ -1,27 +1,26 @@
 <?php
 include_once '../includes/auth.php';
-requireLogin();
+requireRole(['admin', 'receptionist']);
+requirePostRequest();
+requireCsrfToken();
 include_once '../config/database.php';
 $conn = getConnection();
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $name = trim($_POST['name'] ?? '');
-    $description = trim($_POST['description'] ?? '');
+$name        = trim($_POST['name'] ?? '');
+$description = trim($_POST['description'] ?? '');
 
-    if (empty($name)) {
-        header("Location: index.php?msg=" . urlencode("اسم القسم مطلوب"));
-        exit;
-    }
+if ($name === '') {
+    redirectTo('/departments/index.php', 'اسم القسم مطلوب', 'warning');
+}
 
-    $query = "INSERT INTO departments (name, description) VALUES (:name, :description)";
-    $stmt = $conn->prepare($query);
+try {
+    $stmt = $conn->prepare('INSERT INTO departments (name, description) VALUES (:name, :description)');
     $stmt->bindParam(':name', $name);
     $stmt->bindParam(':description', $description);
     $stmt->execute();
-
-    header("Location: index.php?msg=" . urlencode("تم إضافة القسم بنجاح"));
-    exit;
+} catch (PDOException $e) {
+    error_log('Department create failed: ' . $e->getMessage());
+    redirectTo('/departments/index.php', 'تعذّر إضافة القسم — قد يكون الاسم مستخدمًا بالفعل', 'danger');
 }
 
-header("Location: index.php");
-exit;
+redirectTo('/departments/index.php', 'تم إضافة القسم بنجاح', 'success');

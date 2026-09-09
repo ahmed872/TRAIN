@@ -1,19 +1,28 @@
 <?php
 include_once '../includes/auth.php';
-requireLogin();
+requireRole(['admin']);
+requirePostRequest();
+requireCsrfToken();
 include_once '../config/database.php';
 $conn = getConnection();
 
-$id = $_GET['id'] ?? null;
+$id = validId($_POST['id'] ?? null);
 
-if (!$id) {
-    header("Location: index.php?msg=" . urlencode("لم يتم تحديد الموعد"));
-    exit;
+if ($id === null) {
+    redirectTo('/appointments/index.php', 'لم يتم تحديد الموعد', 'warning');
 }
 
-$stmt = $conn->prepare("DELETE FROM appointments WHERE id = :id");
-$stmt->bindParam(':id', $id);
-$stmt->execute();
+try {
+    $stmt = $conn->prepare('DELETE FROM appointments WHERE id = :id');
+    $stmt->bindValue(':id', $id, PDO::PARAM_INT);
+    $stmt->execute();
 
-header("Location: index.php?msg=" . urlencode("تم حذف الموعد بنجاح"));
-exit;
+    if ($stmt->rowCount() === 0) {
+        redirectTo('/appointments/index.php', 'الموعد غير موجود', 'warning');
+    }
+} catch (PDOException $e) {
+    error_log('Appointment delete failed: ' . $e->getMessage());
+    redirectTo('/appointments/index.php', 'لا يمكن الحذف — الموعد مرتبط بسجل طبي', 'danger');
+}
+
+redirectTo('/appointments/index.php', 'تم حذف الموعد بنجاح', 'success');

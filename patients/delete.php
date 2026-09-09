@@ -1,23 +1,28 @@
 <?php
 include_once '../includes/auth.php';
-requireLogin();
+requireRole(['admin']);
+requirePostRequest();
+requireCsrfToken();
 include_once '../config/database.php';
 $conn = getConnection();
 
-$id = $_GET['id'] ?? null;
+$id = validId($_POST['id'] ?? null);
 
-if (!$id) {
-    header("Location: index.php?msg=" . urlencode("لم يتم تحديد المريض"));
-    exit;
+if ($id === null) {
+    redirectTo('/patients/index.php', 'لم يتم تحديد المريض', 'warning');
 }
 
 try {
-    $stmt = $conn->prepare("DELETE FROM patients WHERE id = :id");
-    $stmt->bindParam(':id', $id);
+    $stmt = $conn->prepare('DELETE FROM patients WHERE id = :id');
+    $stmt->bindValue(':id', $id, PDO::PARAM_INT);
     $stmt->execute();
 
-    header("Location: index.php?msg=" . urlencode("تم حذف المريض بنجاح"));
+    if ($stmt->rowCount() === 0) {
+        redirectTo('/patients/index.php', 'المريض غير موجود', 'warning');
+    }
 } catch (PDOException $e) {
-    header("Location: index.php?msg=" . urlencode("لا يمكن الحذف — المريض مرتبط بمواعيد"));
+    error_log('Patient delete failed: ' . $e->getMessage());
+    redirectTo('/patients/index.php', 'لا يمكن الحذف — المريض مرتبط بمواعيد', 'danger');
 }
-exit;
+
+redirectTo('/patients/index.php', 'تم حذف المريض بنجاح', 'success');

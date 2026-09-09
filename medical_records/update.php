@@ -1,104 +1,140 @@
 <?php
 include_once '../includes/auth.php';
-requireLogin();
+requireRole(['admin', 'doctor']);
 include_once '../config/database.php';
 $conn = getConnection();
 
-$id = $_GET['id'] ?? $_POST['id'] ?? null;
+$id = validId($_GET['id'] ?? $_POST['id'] ?? null);
 
-if (!$id) {
-    header("Location: index.php?msg=" . urlencode("لم يتم تحديد السجل"));
-    exit;
+if ($id === null) {
+    redirectTo('/medical_records/index.php', 'لم يتم تحديد السجل', 'warning');
+}
+
+/**
+ * يتأكد إن الطبيب الحالي هو صاحب الموعد المرتبط بالسجل ده.
+ */
+function assertRecordIsEditable(PDO $conn, int $recordId): void
+{
+    if (currentRole() !== 'doctor') {
+        return;
+    }
+
+    $stmt = $conn->prepare(
+        'SELECT appointments.doctor_id
+         FROM medical_records
+         JOIN appointments ON medical_records.appointment_id = appointments.id
+         WHERE medical_records.id = :id'
+    );
+    $stmt->bindValue(':id', $recordId, PDO::PARAM_INT);
+    $stmt->execute();
+    $row = $stmt->fetch();
+
+    if (!$row || (int) $row['doctor_id'] !== (int) ($_SESSION['doctor_id'] ?? 0)) {
+        redirectTo('/medical_records/index.php', 'غير مصرح لك بتعديل هذا السجل', 'danger');
+    }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $appointment_id = $_POST['appointment_id'] ?? '';
-    $diagnosis = trim($_POST['diagnosis'] ?? '');
-    $prescription = trim($_POST['prescription'] ?? '');
-    $notes = trim($_POST['notes'] ?? '');
+    requireCsrfToken();
+    assertRecordIsEditable($conn, $id);
 
-    if (empty($appointment_id)) {
-        header("Location: update.php?id=$id&msg=" . urlencode("لازم تختار الموعد"));
-        exit;
+    $appointment_id = validId($_POST['appointment_id'] ?? null);
+    $diagnosis      = trim($_POST['diagnosis'] ?? '');
+    $prescription   = trim($_POST['prescription'] ?? '');
+    $notes          = trim($_POST['notes'] ?? '');
+
+    if ($appointment_id === null) {
+        redirectTo('/medical_records/update.php?id=' . $id, 'لازم تختار الموعد', 'warning');
     }
 
-    $query = "UPDATE medical_records SET appointment_id = :appointment_id, diagnosis = :diagnosis,
-              prescription = :prescription, notes = :notes WHERE id = :id";
-    $stmt = $conn->prepare($query);
-    $stmt->bindParam(':appointment_id', $appointment_id);
-    $stmt->bindParam(':diagnosis', $diagnosis);
-    $stmt->bindParam(':prescription', $prescription);
-    $stmt->bindParam(':notes', $notes);
-    $stmt->bindParam(':id', $id);
-    $stmt->execute();
+    try {
+        $stmt = $conn->prepare(
+            'UPDATE medical_records SET appointment_id = :appointment_id, diagnosis = :diagnosis,
+             prescription = :prescription, notes = :notes WHERE id = :id'
+        );
+        $stmt->bindValue(':appointment_id', $appointment_id, PDO::PARAM_INT);
+        $stmt->bindParam(':diagnosis', $diagnosis);
+        $stmt->bindParam(':prescription', $prescription);
+        $stmt->bindParam(':notes', $notes);
+        $stmt->bindValue(':id', $id, PDO::PARAM_INT);
+        $stmt->execute();
+    } catch (PDOException $e) {
+        if ($e->getCode() === '23000') {
+            redirectTo('/medical_records/update.php?id=' . $id, 'هذا الموعد له سجل طبي بالفعل', 'warning');
+        }
 
-    header("Location: index.php?msg=" . urlencode("تم تعديل السجل الطبي بنجاح"));
-    exit;
+        error_log('Medical record update failed: ' . $e->getMessage());
+        redirectTo('/medical_records/update.php?id=' . $id, 'تعذّر حفظ التعديل', 'danger');
+    }
+
+    redirectTo('/medical_records/index.php', 'تم تعديل السجل الطبي بنجاح', 'success');
 }
 
-$stmt = $conn->prepare("SELECT * FROM medical_records WHERE id = :id");
-$stmt->bindParam(':id', $id);
+assertRecordIsEditable($conn, $id);
+
+$stmt = $conn->prepare('SELECT * FROM medical_records WHERE id = :id');
+$stmt->bindValue(':id', $id, PDO::PARAM_INT);
 $stmt->execute();
 $record = $stmt->fetch();
 
 if (!$record) {
-    header("Location: index.php?msg=" . urlencode("السجل غير موجود"));
-    exit;
+    redirectTo('/medical_records/index.php', 'السجل غير موجود', 'warning');
 }
 
+// المواعيد المتاحة = المواعيد بدون سجل + الموعد المرتبط بالسجل الحالي
 $apptStmt = $conn->prepare(
-    "SELECT appointments.id, appointments.appointment_date,
+    'SELECT appointments.id, appointments.appointment_date,
             patients.name AS patient_name, doctors.name AS doctor_name
      FROM appointments
      JOIN patients ON appointments.patient_id = patients.id
      JOIN doctors ON appointments.doctor_id = doctors.id
-     ORDER BY appointments.appointment_date DESC"
+     LEFT JOIN medical_records ON medical_records.appointment_id = appointments.id
+     WHERE medical_records.id IS NULL OR medical_records.id = :id
+     ORDER BY appointments.appointment_date DESC'
 );
+$apptStmt->bindValue(':id', $id, PDO::PARAM_INT);
 $apptStmt->execute();
 $appointments = $apptStmt->fetchAll();
 
 include_once '../includes/header.php';
 ?>
 
-<h3>Edit Medical Record #<?= $record['id'] ?></h3>
-
-<?php if (isset($_GET['msg'])): ?>
-    <div class="alert alert-warning"><?= htmlspecialchars($_GET['msg']) ?></div>
-<?php endif; ?>
+<h3>تعديل السجل الطبي رقم <?= (int) $record['id'] ?></h3>
 
 <form action="update.php" method="POST" class="bg-white p-4 rounded shadow-sm">
-    <input type="hidden" name="id" value="<?= $record['id'] ?>">
+    <?= csrfField() ?>
+    <input type="hidden" name="id" value="<?= (int) $record['id'] ?>">
 
     <div class="mb-3">
-        <label class="form-label">Appointment</label>
+        <label class="form-label">الموعد</label>
         <select name="appointment_id" class="form-select" required>
             <?php foreach ($appointments as $a): ?>
-                <option value="<?= $a['id'] ?>" <?= $a['id'] == $record['appointment_id'] ? 'selected' : '' ?>>
-                    #<?= $a['id'] ?> — <?= htmlspecialchars($a['patient_name']) ?>
-                    with Dr. <?= htmlspecialchars($a['doctor_name']) ?>
-                    (<?= htmlspecialchars($a['appointment_date']) ?>)
+                <option value="<?= (int) $a['id'] ?>" <?= (int) $a['id'] === (int) $record['appointment_id'] ? 'selected' : '' ?>>
+                    #<?= (int) $a['id'] ?> — <?= htmlspecialchars($a['patient_name']) ?>
+                    مع د. <?= htmlspecialchars($a['doctor_name']) ?>
+                    (<?= htmlspecialchars((string) $a['appointment_date']) ?>)
                 </option>
             <?php endforeach; ?>
         </select>
     </div>
 
     <div class="mb-3">
-        <label class="form-label">Diagnosis</label>
-        <textarea name="diagnosis" class="form-control"><?= htmlspecialchars($record['diagnosis']) ?></textarea>
+        <label class="form-label">التشخيص</label>
+        <textarea name="diagnosis" class="form-control"><?= htmlspecialchars((string) $record['diagnosis']) ?></textarea>
     </div>
 
     <div class="mb-3">
-        <label class="form-label">Prescription / Treatment</label>
-        <textarea name="prescription" class="form-control"><?= htmlspecialchars($record['prescription']) ?></textarea>
+        <label class="form-label">الروشتة / العلاج</label>
+        <textarea name="prescription" class="form-control"><?= htmlspecialchars((string) $record['prescription']) ?></textarea>
     </div>
 
     <div class="mb-3">
-        <label class="form-label">Notes</label>
-        <textarea name="notes" class="form-control"><?= htmlspecialchars($record['notes']) ?></textarea>
+        <label class="form-label">ملاحظات</label>
+        <textarea name="notes" class="form-control"><?= htmlspecialchars((string) $record['notes']) ?></textarea>
     </div>
 
-    <button type="submit" class="btn btn-primary">Save Changes</button>
-    <a href="index.php" class="btn btn-secondary">Cancel</a>
+    <button type="submit" class="btn btn-primary">حفظ التعديلات</button>
+    <a href="index.php" class="btn btn-secondary">إلغاء</a>
 </form>
 
 <?php include_once '../includes/footer.php'; ?>

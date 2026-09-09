@@ -4,78 +4,79 @@ requireLogin();
 include_once '../config/database.php';
 $conn = getConnection();
 
-$query = "SELECT * FROM departments ORDER BY id DESC";
-$stmt = $conn->prepare($query);
+$stmt = $conn->prepare('SELECT * FROM departments ORDER BY id DESC');
 $stmt->execute();
 $departments = $stmt->fetchAll();
+
+$canManage = in_array(currentRole(), ['admin', 'receptionist'], true);
 
 include_once '../includes/header.php';
 ?>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
-    <h3>Departments</h3>
-    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal">
-        + Add Department
-    </button>
+    <h3>الأقسام</h3>
+    <?php if ($canManage): ?>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addModal">+ إضافة قسم</button>
+    <?php endif; ?>
 </div>
 
-<?php if (isset($_GET['msg'])): ?>
-    <div class="alert alert-info"><?= htmlspecialchars($_GET['msg']) ?></div>
-<?php endif; ?>
-
-<table class="table table-bordered table-striped bg-white">
+<table class="table table-bordered table-striped bg-white align-middle">
     <thead class="table-dark">
         <tr>
             <th>#</th>
-            <th>Department Name</th>
-            <th>Description</th>
-            <th>Actions</th>
+            <th>اسم القسم</th>
+            <th>الوصف</th>
+            <?php if ($canManage): ?><th>إجراءات</th><?php endif; ?>
         </tr>
     </thead>
     <tbody>
         <?php if (empty($departments)): ?>
             <tr>
-                <td colspan="4" class="text-center">No departments have been added yet.</td>
+                <td colspan="<?= $canManage ? 4 : 3 ?>" class="text-center">لا توجد أقسام مضافة حتى الآن.</td>
             </tr>
         <?php endif; ?>
         <?php foreach ($departments as $dept): ?>
             <tr>
-                <td><?= $dept['id'] ?></td>
+                <td><?= (int) $dept['id'] ?></td>
                 <td><?= htmlspecialchars($dept['name']) ?></td>
-                <td><?= htmlspecialchars($dept['description']) ?></td>
-                <td>
-                    <a href="update.php?id=<?= $dept['id'] ?>" class="btn btn-sm btn-warning">Edit</a>
-                    <a href="delete.php?id=<?= $dept['id'] ?>" class="btn btn-sm btn-danger"
-                        onclick="return confirm('Are you sure you want to delete this department?')">Delete</a>
-                </td>
+                <td><?= nl2br(htmlspecialchars((string) $dept['description'])) ?></td>
+                <?php if ($canManage): ?>
+                    <td>
+                        <a href="update.php?id=<?= (int) $dept['id'] ?>" class="btn btn-sm btn-warning">تعديل</a>
+                        <?= deleteButton('delete.php', (int) $dept['id'], 'هل أنت متأكد من حذف هذا القسم؟') ?>
+                    </td>
+                <?php endif; ?>
             </tr>
         <?php endforeach; ?>
     </tbody>
 </table>
 
-<!-- Modal الإضافة -->
-<div class="modal fade" id="addModal" tabindex="-1">
-    <div class="modal-dialog">
-        <form action="create.php" method="POST" class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Add Department</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <div class="mb-3">
-                    <label class="form-label">Department Name</label>
-                    <input type="text" name="name" class="form-control" required>
+<?php if ($canManage): ?>
+    <!-- Modal الإضافة -->
+    <div class="modal fade" id="addModal" tabindex="-1">
+        <div class="modal-dialog">
+            <form action="create.php" method="POST" class="modal-content">
+                <?= csrfField() ?>
+                <div class="modal-header">
+                    <h5 class="modal-title">إضافة قسم</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label">Description</label>
-                    <textarea name="description" class="form-control"></textarea>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">اسم القسم</label>
+                        <input type="text" name="name" class="form-control" maxlength="100" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">الوصف</label>
+                        <textarea name="description" class="form-control"></textarea>
+                    </div>
                 </div>
-            </div>
-            <div class="modal-footer">
-                <button type="submit" class="btn btn-primary">Save</button>
-            </div>
-        </form>
+                <div class="modal-footer">
+                    <button type="submit" class="btn btn-primary">حفظ</button>
+                </div>
+            </form>
+        </div>
     </div>
-</div>
+<?php endif; ?>
 
 <?php include_once '../includes/footer.php'; ?>

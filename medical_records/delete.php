@@ -1,19 +1,28 @@
 <?php
 include_once '../includes/auth.php';
-requireLogin();
+requireRole(['admin']);
+requirePostRequest();
+requireCsrfToken();
 include_once '../config/database.php';
 $conn = getConnection();
 
-$id = $_GET['id'] ?? null;
+$id = validId($_POST['id'] ?? null);
 
-if (!$id) {
-    header("Location: index.php?msg=" . urlencode("لم يتم تحديد السجل"));
-    exit;
+if ($id === null) {
+    redirectTo('/medical_records/index.php', 'لم يتم تحديد السجل', 'warning');
 }
 
-$stmt = $conn->prepare("DELETE FROM medical_records WHERE id = :id");
-$stmt->bindParam(':id', $id);
-$stmt->execute();
+try {
+    $stmt = $conn->prepare('DELETE FROM medical_records WHERE id = :id');
+    $stmt->bindValue(':id', $id, PDO::PARAM_INT);
+    $stmt->execute();
 
-header("Location: index.php?msg=" . urlencode("تم حذف السجل الطبي بنجاح"));
-exit;
+    if ($stmt->rowCount() === 0) {
+        redirectTo('/medical_records/index.php', 'السجل غير موجود', 'warning');
+    }
+} catch (PDOException $e) {
+    error_log('Medical record delete failed: ' . $e->getMessage());
+    redirectTo('/medical_records/index.php', 'تعذّر حذف السجل الطبي', 'danger');
+}
+
+redirectTo('/medical_records/index.php', 'تم حذف السجل الطبي بنجاح', 'success');

@@ -1,34 +1,39 @@
 <?php
 include_once '../includes/auth.php';
-requireLogin();
+requireRole(['admin', 'receptionist']);
+requirePostRequest();
+requireCsrfToken();
 include_once '../config/database.php';
 $conn = getConnection();
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $name = trim($_POST['name'] ?? '');
-    $specialization = trim($_POST['specialization'] ?? '');
-    $department_id = $_POST['department_id'] ?: null;
-    $phone = trim($_POST['phone'] ?? '');
-    $email = trim($_POST['email'] ?? '');
+$name           = trim($_POST['name'] ?? '');
+$specialization = trim($_POST['specialization'] ?? '');
+$department_id  = validId($_POST['department_id'] ?? null);
+$phone          = trim($_POST['phone'] ?? '');
+$email          = trim($_POST['email'] ?? '');
 
-    if (empty($name)) {
-        header("Location: index.php?msg=" . urlencode("اسم الطبيب مطلوب"));
-        exit;
-    }
+if ($name === '') {
+    redirectTo('/doctors/index.php', 'اسم الطبيب مطلوب', 'warning');
+}
 
-    $query = "INSERT INTO doctors (name, specialization, department_id, phone, email)
-              VALUES (:name, :specialization, :department_id, :phone, :email)";
-    $stmt = $conn->prepare($query);
+if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    redirectTo('/doctors/index.php', 'صيغة البريد الإلكتروني غير صحيحة', 'warning');
+}
+
+try {
+    $stmt = $conn->prepare(
+        'INSERT INTO doctors (name, specialization, department_id, phone, email)
+         VALUES (:name, :specialization, :department_id, :phone, :email)'
+    );
     $stmt->bindParam(':name', $name);
     $stmt->bindParam(':specialization', $specialization);
-    $stmt->bindParam(':department_id', $department_id);
+    $stmt->bindValue(':department_id', $department_id, $department_id === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
     $stmt->bindParam(':phone', $phone);
     $stmt->bindParam(':email', $email);
     $stmt->execute();
-
-    header("Location: index.php?msg=" . urlencode("تم إضافة الطبيب بنجاح"));
-    exit;
+} catch (PDOException $e) {
+    error_log('Doctor create failed: ' . $e->getMessage());
+    redirectTo('/doctors/index.php', 'تعذّر إضافة الطبيب — تأكد من صحة القسم المختار', 'danger');
 }
 
-header("Location: index.php");
-exit;
+redirectTo('/doctors/index.php', 'تم إضافة الطبيب بنجاح', 'success');

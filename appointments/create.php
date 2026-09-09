@@ -1,46 +1,41 @@
 <?php
-
+include_once '../includes/auth.php';
+requireRole(['admin', 'receptionist']);
+requirePostRequest();
+requireCsrfToken();
 include_once '../config/database.php';
+include_once '../includes/validation.php';
 $conn = getConnection();
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $patient_id = $_POST['patient_id'] ?? '';
-    $doctor_id = $_POST['doctor_id'] ?? '';
-    $appointment_date = $_POST['appointment_date'] ?? '';
-    $notes = trim($_POST['notes'] ?? '');
+$patient_id       = validId($_POST['patient_id'] ?? null);
+$doctor_id        = validId($_POST['doctor_id'] ?? null);
+$appointment_date = normalizeDateTime($_POST['appointment_date'] ?? null);
+$notes            = trim($_POST['notes'] ?? '');
 
-    if (empty($patient_id) || empty($doctor_id) || empty($appointment_date)) {
-        header("Location: index.php?msg=" . urlencode("المريض والطبيب وتاريخ الموعد مطلوبين"));
-        exit;
-    }
+if ($patient_id === null || $doctor_id === null || $appointment_date === null) {
+    redirectTo('/appointments/index.php', 'المريض والطبيب وتاريخ الموعد مطلوبين وبصيغة صحيحة', 'warning');
+}
 
-    // مفيش دكتور له معادين في نفس الوقت
-    $checkQuery = "SELECT id FROM appointments
-                   WHERE doctor_id = :doctor_id
-                   AND appointment_date = :appointment_date
-                   AND status != 'cancelled'";
-    $checkStmt = $conn->prepare($checkQuery);
-    $checkStmt->bindParam(':doctor_id', $doctor_id);
-    $checkStmt->bindParam(':appointment_date', $appointment_date);
-    $checkStmt->execute();
-
-    if ($checkStmt->fetch()) {
-        header("Location: index.php?msg=" . urlencode("هذا الطبيب لديه موعد آخر في نفس التوقيت"));
-        exit;
-    }
-
-    $query = "INSERT INTO appointments (patient_id, doctor_id, appointment_date, notes)
-              VALUES (:patient_id, :doctor_id, :appointment_date, :notes)";
-    $stmt = $conn->prepare($query);
-    $stmt->bindParam(':patient_id', $patient_id);
-    $stmt->bindParam(':doctor_id', $doctor_id);
+try {
+    // القيد UNIQUE على (doctor_id, appointment_date) في قاعدة البيانات هو اللي
+    // بيمنع الحجز المزدوج فعليًا حتى لو جالنا طلبين في نفس اللحظة.
+    $stmt = $conn->prepare(
+        'INSERT INTO appointments (patient_id, doctor_id, appointment_date, notes)
+         VALUES (:patient_id, :doctor_id, :appointment_date, :notes)'
+    );
+    $stmt->bindValue(':patient_id', $patient_id, PDO::PARAM_INT);
+    $stmt->bindValue(':doctor_id', $doctor_id, PDO::PARAM_INT);
     $stmt->bindParam(':appointment_date', $appointment_date);
     $stmt->bindParam(':notes', $notes);
     $stmt->execute();
+} catch (PDOException $e) {
+    // 23000 = انتهاك قيد (تكرار الموعد أو مفتاح أجنبي غير موجود)
+    if ($e->getCode() === '23000') {
+        redirectTo('/appointments/index.php', 'هذا الطبيب لديه موعد آخر في نفس التوقيت، أو أن المريض/الطبيب غير موجود', 'warning');
+    }
 
-    header("Location: index.php?msg=" . urlencode("تم إضافة الموعد بنجاح"));
-    exit;
+    error_log('Appointment create failed: ' . $e->getMessage());
+    redirectTo('/appointments/index.php', 'تعذّر إضافة الموعد', 'danger');
 }
 
-header("Location: index.php");
-exit;
+redirectTo('/appointments/index.php', 'تم إضافة الموعد بنجاح', 'success');

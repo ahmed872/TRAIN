@@ -1,24 +1,28 @@
 <?php
 include_once '../includes/auth.php';
-requireLogin();
+requireRole(['admin']);
+requirePostRequest();
+requireCsrfToken();
 include_once '../config/database.php';
 $conn = getConnection();
 
-$id = $_GET['id'] ?? null;
+$id = validId($_POST['id'] ?? null);
 
-if (!$id) {
-    header("Location: index.php?msg=" . urlencode("لم يتم تحديد القسم"));
-    exit;
+if ($id === null) {
+    redirectTo('/departments/index.php', 'لم يتم تحديد القسم', 'warning');
 }
 
 try {
-    $query = "DELETE FROM departments WHERE id = :id";
-    $stmt = $conn->prepare($query);
-    $stmt->bindParam(':id', $id);
+    $stmt = $conn->prepare('DELETE FROM departments WHERE id = :id');
+    $stmt->bindValue(':id', $id, PDO::PARAM_INT);
     $stmt->execute();
 
-    header("Location: index.php?msg=" . urlencode("تم حذف القسم بنجاح"));
+    if ($stmt->rowCount() === 0) {
+        redirectTo('/departments/index.php', 'القسم غير موجود', 'warning');
+    }
 } catch (PDOException $e) {
-    header("Location: index.php?msg=" . urlencode("لا يمكن الحذف — القسم مرتبط ببيانات أخرى"));
+    error_log('Department delete failed: ' . $e->getMessage());
+    redirectTo('/departments/index.php', 'لا يمكن الحذف — القسم مرتبط ببيانات أخرى', 'danger');
 }
-exit;
+
+redirectTo('/departments/index.php', 'تم حذف القسم بنجاح', 'success');

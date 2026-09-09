@@ -1,74 +1,72 @@
 <?php
 include_once '../includes/auth.php';
-requireLogin();
+requireRole(['admin', 'receptionist']);
 include_once '../config/database.php';
 $conn = getConnection();
 
-$id = $_GET['id'] ?? $_POST['id'] ?? null;
+$id = validId($_GET['id'] ?? $_POST['id'] ?? null);
 
-if (!$id) {
-    header("Location: index.php?msg=" . urlencode("لم يتم تحديد القسم"));
-    exit;
+if ($id === null) {
+    redirectTo('/departments/index.php', 'لم يتم تحديد القسم', 'warning');
 }
 
-// لو الفورم اتبعت (POST) نفذ التعديل
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $name = trim($_POST['name'] ?? '');
+    requireCsrfToken();
+
+    $name        = trim($_POST['name'] ?? '');
     $description = trim($_POST['description'] ?? '');
 
-    if (empty($name)) {
-        header("Location: update.php?id=$id&msg=" . urlencode("اسم القسم مطلوب"));
-        exit;
+    if ($name === '') {
+        redirectTo('/departments/update.php?id=' . $id, 'اسم القسم مطلوب', 'warning');
     }
 
-    $query = "UPDATE departments SET name = :name, description = :description WHERE id = :id";
-    $stmt = $conn->prepare($query);
-    $stmt->bindParam(':name', $name);
-    $stmt->bindParam(':description', $description);
-    $stmt->bindParam(':id', $id);
-    $stmt->execute();
+    try {
+        $stmt = $conn->prepare(
+            'UPDATE departments SET name = :name, description = :description WHERE id = :id'
+        );
+        $stmt->bindParam(':name', $name);
+        $stmt->bindParam(':description', $description);
+        $stmt->bindValue(':id', $id, PDO::PARAM_INT);
+        $stmt->execute();
+    } catch (PDOException $e) {
+        error_log('Department update failed: ' . $e->getMessage());
+        redirectTo('/departments/update.php?id=' . $id, 'تعذّر حفظ التعديل', 'danger');
+    }
 
-    header("Location: index.php?msg=" . urlencode("تم تعديل القسم بنجاح"));
-    exit;
+    redirectTo('/departments/index.php', 'تم تعديل القسم بنجاح', 'success');
 }
 
-// لو GET، هات بيانات القسم الحالية واعرضها في الفورم
-$query = "SELECT * FROM departments WHERE id = :id";
-$stmt = $conn->prepare($query);
-$stmt->bindParam(':id', $id);
+$stmt = $conn->prepare('SELECT * FROM departments WHERE id = :id');
+$stmt->bindValue(':id', $id, PDO::PARAM_INT);
 $stmt->execute();
 $department = $stmt->fetch();
 
 if (!$department) {
-    header("Location: index.php?msg=" . urlencode("القسم غير موجود"));
-    exit;
+    redirectTo('/departments/index.php', 'القسم غير موجود', 'warning');
 }
 
 include_once '../includes/header.php';
 ?>
 
-<h3>Edit Department: <?= htmlspecialchars($department['name']) ?></h3>
-
-<?php if (isset($_GET['msg'])): ?>
-    <div class="alert alert-warning"><?= htmlspecialchars($_GET['msg']) ?></div>
-<?php endif; ?>
+<h3>تعديل القسم: <?= htmlspecialchars($department['name']) ?></h3>
 
 <form action="update.php" method="POST" class="bg-white p-4 rounded shadow-sm">
-    <input type="hidden" name="id" value="<?= $department['id'] ?>">
+    <?= csrfField() ?>
+    <input type="hidden" name="id" value="<?= (int) $department['id'] ?>">
 
     <div class="mb-3">
-        <label class="form-label">Department Name</label>
-        <input type="text" name="name" class="form-control" value="<?= htmlspecialchars($department['name']) ?>"
-            required>
+        <label class="form-label">اسم القسم</label>
+        <input type="text" name="name" class="form-control" maxlength="100"
+            value="<?= htmlspecialchars($department['name']) ?>" required>
     </div>
 
     <div class="mb-3">
-        <label class="form-label">Description</label>
-        <textarea name="description" class="form-control"><?= htmlspecialchars($department['description']) ?></textarea>
+        <label class="form-label">الوصف</label>
+        <textarea name="description" class="form-control"><?= htmlspecialchars((string) $department['description']) ?></textarea>
     </div>
 
-    <button type="submit" class="btn btn-primary">Save Changes</button>
-    <a href="index.php" class="btn btn-secondary">Cancel</a>
+    <button type="submit" class="btn btn-primary">حفظ التعديلات</button>
+    <a href="index.php" class="btn btn-secondary">إلغاء</a>
 </form>
 
 <?php include_once '../includes/footer.php'; ?>

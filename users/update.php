@@ -4,120 +4,170 @@ requireAdmin();
 include_once '../config/database.php';
 $conn = getConnection();
 
-$id = $_GET['id'] ?? $_POST['id'] ?? null;
+$id = validId($_GET['id'] ?? $_POST['id'] ?? null);
 
-if (!$id) {
-    header("Location: index.php?msg=" . urlencode("لم يتم تحديد المستخدم"));
-    exit;
+if ($id === null) {
+    redirectTo('/users/index.php', 'لم يتم تحديد المستخدم', 'warning');
+}
+
+$allowedRoles = ['admin', 'receptionist', 'doctor', 'patient'];
+
+/** يعدّ الأدمن الباقيين غير المستخدم ده، عشان ما نقفلش النظام على الكل. */
+function otherAdminsCount(PDO $conn, int $excludeUserId): int
+{
+    $stmt = $conn->prepare("SELECT COUNT(*) AS total FROM users WHERE role = 'admin' AND id != :id");
+    $stmt->bindValue(':id', $excludeUserId, PDO::PARAM_INT);
+    $stmt->execute();
+
+    return (int) $stmt->fetch()['total'];
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $username = trim($_POST['username'] ?? '');
-    $password = $_POST['password'] ?? '';
-    $full_name = trim($_POST['full_name'] ?? '');
-    $role = $_POST['role'] ?? 'receptionist';
-    $doctor_id = $_POST['doctor_id'] ?: null;
+    requireCsrfToken();
 
-    if (empty($username)) {
-        header("Location: update.php?id=$id&msg=" . urlencode("اسم المستخدم مطلوب"));
-        exit;
+    $username  = trim($_POST['username'] ?? '');
+    $password  = $_POST['password'] ?? '';
+    $full_name = trim($_POST['full_name'] ?? '');
+    $role      = $_POST['role'] ?? 'receptionist';
+    $doctor_id = validId($_POST['doctor_id'] ?? null);
+
+    if ($username === '') {
+        redirectTo('/users/update.php?id=' . $id, 'اسم المستخدم مطلوب', 'warning');
+    }
+
+    // كانت الصلاحية بتتحفظ من غير أي تحقق — أي قيمة كانت تعدي
+    if (!in_array($role, $allowedRoles, true)) {
+        redirectTo('/users/update.php?id=' . $id, 'الصلاحية المختارة غير صالحة', 'warning');
+    }
+
+    if ($password !== '' && mb_strlen($password) < 8) {
+        redirectTo('/users/update.php?id=' . $id, 'كلمة المرور لازم تكون 8 أحرف على الأقل', 'warning');
+    }
+
+    // منع تنزيل صلاحية آخر أدمن في النظام
+    $currentStmt = $conn->prepare('SELECT role FROM users WHERE id = :id');
+    $currentStmt->bindValue(':id', $id, PDO::PARAM_INT);
+    $currentStmt->execute();
+    $existing = $currentStmt->fetch();
+
+    if (!$existing) {
+        redirectTo('/users/index.php', 'المستخدم غير موجود', 'warning');
+    }
+
+    if ($existing['role'] === 'admin' && $role !== 'admin' && otherAdminsCount($conn, $id) === 0) {
+        redirectTo('/users/update.php?id=' . $id, 'لا يمكن تغيير صلاحية آخر مدير في النظام', 'danger');
     }
 
     // لو كتب كلمة مرور جديدة، حدّثها. لو سابها فاضية، سيب القديمة زي ما هي
-    if (!empty($password)) {
+    if ($password !== '') {
         $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
-        $query = "UPDATE users SET username = :username, password = :password,
-                  full_name = :full_name, role = :role, doctor_id = :doctor_id
-                  WHERE id = :id";
-        $stmt = $conn->prepare($query);
+        $stmt = $conn->prepare(
+            'UPDATE users SET username = :username, password = :password,
+             full_name = :full_name, role = :role, doctor_id = :doctor_id
+             WHERE id = :id'
+        );
         $stmt->bindParam(':password', $hashedPassword);
     } else {
-        $query = "UPDATE users SET username = :username,
-                  full_name = :full_name, role = :role, doctor_id = :doctor_id
-                  WHERE id = :id";
-        $stmt = $conn->prepare($query);
+        $stmt = $conn->prepare(
+            'UPDATE users SET username = :username,
+             full_name = :full_name, role = :role, doctor_id = :doctor_id
+             WHERE id = :id'
+        );
     }
 
     $stmt->bindParam(':username', $username);
     $stmt->bindParam(':full_name', $full_name);
     $stmt->bindParam(':role', $role);
-    $stmt->bindParam(':doctor_id', $doctor_id);
-    $stmt->bindParam(':id', $id);
+    $stmt->bindValue(':doctor_id', $doctor_id, $doctor_id === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+    $stmt->bindValue(':id', $id, PDO::PARAM_INT);
 
     try {
         $stmt->execute();
-        header("Location: index.php?msg=" . urlencode("تم تعديل بيانات المستخدم بنجاح"));
     } catch (PDOException $e) {
-        header("Location: update.php?id=$id&msg=" . urlencode("اسم المستخدم موجود بالفعل"));
+        error_log('User update failed: ' . $e->getMessage());
+        redirectTo('/users/update.php?id=' . $id, 'اسم المستخدم موجود بالفعل', 'danger');
     }
-    exit;
+
+    // لو الأدمن عدّل بيانات نفسه، نحدّث الجلسة عشان الواجهة تفضل متطابقة
+    if ($id === (int) $_SESSION['user_id']) {
+        $_SESSION['username']  = $username;
+        $_SESSION['full_name'] = $full_name;
+        $_SESSION['role']      = $role;
+        $_SESSION['doctor_id'] = $doctor_id;
+    }
+
+    redirectTo('/users/index.php', 'تم تعديل بيانات المستخدم بنجاح', 'success');
 }
 
-$stmt = $conn->prepare("SELECT * FROM users WHERE id = :id");
-$stmt->bindParam(':id', $id);
+$stmt = $conn->prepare('SELECT id, username, full_name, role, doctor_id FROM users WHERE id = :id');
+$stmt->bindValue(':id', $id, PDO::PARAM_INT);
 $stmt->execute();
 $user = $stmt->fetch();
 
 if (!$user) {
-    header("Location: index.php?msg=" . urlencode("المستخدم غير موجود"));
-    exit;
+    redirectTo('/users/index.php', 'المستخدم غير موجود', 'warning');
 }
 
-$doctorsStmt = $conn->prepare("SELECT * FROM doctors ORDER BY name");
+$doctorsStmt = $conn->prepare('SELECT id, name FROM doctors ORDER BY name');
 $doctorsStmt->execute();
 $doctors = $doctorsStmt->fetchAll();
 
 include_once '../includes/header.php';
+
+$roleOptions = [
+    'admin'        => 'مدير النظام',
+    'receptionist' => 'موظف استقبال',
+    'doctor'       => 'طبيب',
+    'patient'      => 'مريض',
+];
 ?>
 
-<h3>Edit User: <?= htmlspecialchars($user['username']) ?></h3>
-
-<?php if (isset($_GET['msg'])): ?>
-    <div class="alert alert-warning"><?= htmlspecialchars($_GET['msg']) ?></div>
-<?php endif; ?>
+<h3>تعديل المستخدم: <?= htmlspecialchars($user['username']) ?></h3>
 
 <form action="update.php" method="POST" class="bg-white p-4 rounded shadow-sm">
-    <input type="hidden" name="id" value="<?= $user['id'] ?>">
+    <?= csrfField() ?>
+    <input type="hidden" name="id" value="<?= (int) $user['id'] ?>">
 
     <div class="mb-3">
-        <label class="form-label">Username</label>
-        <input type="text" name="username" class="form-control" value="<?= htmlspecialchars($user['username']) ?>"
-            required>
+        <label class="form-label">اسم المستخدم</label>
+        <input type="text" name="username" class="form-control" minlength="3" maxlength="50"
+            value="<?= htmlspecialchars($user['username']) ?>" required>
     </div>
 
     <div class="mb-3">
-        <label class="form-label">New Password (leave blank to keep the current password)</label>
-        <input type="password" name="password" class="form-control">
+        <label class="form-label">كلمة مرور جديدة (اتركها فارغة للإبقاء على القديمة)</label>
+        <input type="password" name="password" class="form-control" minlength="8">
     </div>
 
     <div class="mb-3">
-        <label class="form-label">Full Name</label>
-        <input type="text" name="full_name" class="form-control" value="<?= htmlspecialchars($user['full_name']) ?>">
+        <label class="form-label">الاسم بالكامل</label>
+        <input type="text" name="full_name" class="form-control" maxlength="100"
+            value="<?= htmlspecialchars((string) $user['full_name']) ?>">
     </div>
 
     <div class="mb-3">
-        <label class="form-label">Role</label>
+        <label class="form-label">الصلاحية</label>
         <select name="role" class="form-select" required>
-            <option value="admin" <?= $user['role'] === 'admin' ? 'selected' : '' ?>>Administrator</option>
-            <option value="receptionist" <?= $user['role'] === 'receptionist' ? 'selected' : '' ?>>Receptionist</option>
-            <option value="doctor" <?= $user['role'] === 'doctor' ? 'selected' : '' ?>>Doctor</option>
+            <?php foreach ($roleOptions as $value => $label): ?>
+                <option value="<?= $value ?>" <?= $user['role'] === $value ? 'selected' : '' ?>><?= $label ?></option>
+            <?php endforeach; ?>
         </select>
     </div>
 
     <div class="mb-3">
-        <label class="form-label">Link to Doctor (optional)</label>
+        <label class="form-label">ربط بطبيب (اختياري)</label>
         <select name="doctor_id" class="form-select">
-            <option value="">-- None --</option>
+            <option value="">-- بدون --</option>
             <?php foreach ($doctors as $d): ?>
-                <option value="<?= $d['id'] ?>" <?= $d['id'] == $user['doctor_id'] ? 'selected' : '' ?>>
+                <option value="<?= (int) $d['id'] ?>" <?= (int) $d['id'] === (int) $user['doctor_id'] ? 'selected' : '' ?>>
                     <?= htmlspecialchars($d['name']) ?>
                 </option>
             <?php endforeach; ?>
         </select>
     </div>
 
-    <button type="submit" class="btn btn-primary">Save Changes</button>
-    <a href="index.php" class="btn btn-secondary">Cancel</a>
+    <button type="submit" class="btn btn-primary">حفظ التعديلات</button>
+    <a href="index.php" class="btn btn-secondary">إلغاء</a>
 </form>
 
 <?php include_once '../includes/footer.php'; ?>

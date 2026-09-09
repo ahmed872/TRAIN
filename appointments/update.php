@@ -1,101 +1,96 @@
 <?php
 include_once '../includes/auth.php';
-requireLogin();
+requireRole(['admin', 'receptionist']);
 include_once '../config/database.php';
+include_once '../includes/validation.php';
 $conn = getConnection();
 
-$id = $_GET['id'] ?? $_POST['id'] ?? null;
+$id = validId($_GET['id'] ?? $_POST['id'] ?? null);
 
-if (!$id) {
-    header("Location: index.php?msg=" . urlencode("لم يتم تحديد الموعد"));
-    exit;
+if ($id === null) {
+    redirectTo('/appointments/index.php', 'لم يتم تحديد الموعد', 'warning');
 }
+
+$allowedStatuses = ['scheduled', 'completed', 'cancelled'];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $patient_id = $_POST['patient_id'] ?? '';
-    $doctor_id = $_POST['doctor_id'] ?? '';
-    $appointment_date = $_POST['appointment_date'] ?? '';
-    $status = $_POST['status'] ?? 'scheduled';
-    $notes = trim($_POST['notes'] ?? '');
+    requireCsrfToken();
 
-    if (empty($patient_id) || empty($doctor_id) || empty($appointment_date)) {
-        header("Location: update.php?id=$id&msg=" . urlencode("المريض والطبيب وتاريخ الموعد مطلوبين"));
-        exit;
+    $patient_id       = validId($_POST['patient_id'] ?? null);
+    $doctor_id        = validId($_POST['doctor_id'] ?? null);
+    $appointment_date = normalizeDateTime($_POST['appointment_date'] ?? null);
+    $status           = $_POST['status'] ?? 'scheduled';
+    $notes            = trim($_POST['notes'] ?? '');
+
+    if ($patient_id === null || $doctor_id === null || $appointment_date === null) {
+        redirectTo('/appointments/update.php?id=' . $id, 'المريض والطبيب وتاريخ الموعد مطلوبين وبصيغة صحيحة', 'warning');
     }
 
-    // التحقق من عدم وجود موعد تاني لنفس الطبيب في نفس التوقيت (باستثناء الموعد الحالي نفسه)
-    if ($status !== 'cancelled') {
-        $checkQuery = "SELECT id FROM appointments
-                       WHERE doctor_id = :doctor_id
-                       AND appointment_date = :appointment_date
-                       AND status != 'cancelled'
-                       AND id != :id";
-        $checkStmt = $conn->prepare($checkQuery);
-        $checkStmt->bindParam(':doctor_id', $doctor_id);
-        $checkStmt->bindParam(':appointment_date', $appointment_date);
-        $checkStmt->bindParam(':id', $id);
-        $checkStmt->execute();
+    if (!in_array($status, $allowedStatuses, true)) {
+        redirectTo('/appointments/update.php?id=' . $id, 'حالة الموعد غير صالحة', 'warning');
+    }
 
-        if ($checkStmt->fetch()) {
-            header("Location: update.php?id=$id&msg=" . urlencode("هذا الطبيب لديه موعد آخر في نفس التوقيت"));
-            exit;
+    try {
+        $stmt = $conn->prepare(
+            'UPDATE appointments SET patient_id = :patient_id, doctor_id = :doctor_id,
+             appointment_date = :appointment_date, status = :status, notes = :notes
+             WHERE id = :id'
+        );
+        $stmt->bindValue(':patient_id', $patient_id, PDO::PARAM_INT);
+        $stmt->bindValue(':doctor_id', $doctor_id, PDO::PARAM_INT);
+        $stmt->bindParam(':appointment_date', $appointment_date);
+        $stmt->bindParam(':status', $status);
+        $stmt->bindParam(':notes', $notes);
+        $stmt->bindValue(':id', $id, PDO::PARAM_INT);
+        $stmt->execute();
+    } catch (PDOException $e) {
+        if ($e->getCode() === '23000') {
+            redirectTo('/appointments/update.php?id=' . $id, 'هذا الطبيب لديه موعد آخر في نفس التوقيت', 'warning');
         }
+
+        error_log('Appointment update failed: ' . $e->getMessage());
+        redirectTo('/appointments/update.php?id=' . $id, 'تعذّر حفظ التعديل', 'danger');
     }
 
-    $query = "UPDATE appointments SET patient_id = :patient_id, doctor_id = :doctor_id,
-              appointment_date = :appointment_date, status = :status, notes = :notes
-              WHERE id = :id";
-    $stmt = $conn->prepare($query);
-    $stmt->bindParam(':patient_id', $patient_id);
-    $stmt->bindParam(':doctor_id', $doctor_id);
-    $stmt->bindParam(':appointment_date', $appointment_date);
-    $stmt->bindParam(':status', $status);
-    $stmt->bindParam(':notes', $notes);
-    $stmt->bindParam(':id', $id);
-    $stmt->execute();
-
-    header("Location: index.php?msg=" . urlencode("تم تعديل الموعد بنجاح"));
-    exit;
+    redirectTo('/appointments/index.php', 'تم تعديل الموعد بنجاح', 'success');
 }
 
-$stmt = $conn->prepare("SELECT * FROM appointments WHERE id = :id");
-$stmt->bindParam(':id', $id);
+$stmt = $conn->prepare('SELECT * FROM appointments WHERE id = :id');
+$stmt->bindValue(':id', $id, PDO::PARAM_INT);
 $stmt->execute();
 $appointment = $stmt->fetch();
 
 if (!$appointment) {
-    header("Location: index.php?msg=" . urlencode("الموعد غير موجود"));
-    exit;
+    redirectTo('/appointments/index.php', 'الموعد غير موجود', 'warning');
 }
 
-$patientsStmt = $conn->prepare("SELECT * FROM patients ORDER BY name");
+$patientsStmt = $conn->prepare('SELECT id, name FROM patients ORDER BY name');
 $patientsStmt->execute();
 $patients = $patientsStmt->fetchAll();
 
-$doctorsStmt = $conn->prepare("SELECT * FROM doctors ORDER BY name");
+$doctorsStmt = $conn->prepare('SELECT id, name FROM doctors ORDER BY name');
 $doctorsStmt->execute();
 $doctors = $doctorsStmt->fetchAll();
 
 include_once '../includes/header.php';
 
 // تجهيز التاريخ لصيغة datetime-local
-$dateValue = str_replace(' ', 'T', substr($appointment['appointment_date'], 0, 16));
+$dateValue = str_replace(' ', 'T', substr((string) $appointment['appointment_date'], 0, 16));
+
+$statusLabels = ['scheduled' => 'محجوز', 'completed' => 'مكتمل', 'cancelled' => 'ملغي'];
 ?>
 
-<h3>Edit Appointment #<?= $appointment['id'] ?></h3>
-
-<?php if (isset($_GET['msg'])): ?>
-    <div class="alert alert-warning"><?= htmlspecialchars($_GET['msg']) ?></div>
-<?php endif; ?>
+<h3>تعديل الموعد رقم <?= (int) $appointment['id'] ?></h3>
 
 <form action="update.php" method="POST" class="bg-white p-4 rounded shadow-sm">
-    <input type="hidden" name="id" value="<?= $appointment['id'] ?>">
+    <?= csrfField() ?>
+    <input type="hidden" name="id" value="<?= (int) $appointment['id'] ?>">
 
     <div class="mb-3">
-        <label class="form-label">Patient</label>
+        <label class="form-label">المريض</label>
         <select name="patient_id" class="form-select" required>
             <?php foreach ($patients as $p): ?>
-                <option value="<?= $p['id'] ?>" <?= $p['id'] == $appointment['patient_id'] ? 'selected' : '' ?>>
+                <option value="<?= (int) $p['id'] ?>" <?= (int) $p['id'] === (int) $appointment['patient_id'] ? 'selected' : '' ?>>
                     <?= htmlspecialchars($p['name']) ?>
                 </option>
             <?php endforeach; ?>
@@ -103,10 +98,10 @@ $dateValue = str_replace(' ', 'T', substr($appointment['appointment_date'], 0, 1
     </div>
 
     <div class="mb-3">
-        <label class="form-label">Doctor</label>
+        <label class="form-label">الطبيب</label>
         <select name="doctor_id" class="form-select" required>
             <?php foreach ($doctors as $d): ?>
-                <option value="<?= $d['id'] ?>" <?= $d['id'] == $appointment['doctor_id'] ? 'selected' : '' ?>>
+                <option value="<?= (int) $d['id'] ?>" <?= (int) $d['id'] === (int) $appointment['doctor_id'] ? 'selected' : '' ?>>
                     <?= htmlspecialchars($d['name']) ?>
                 </option>
             <?php endforeach; ?>
@@ -114,27 +109,29 @@ $dateValue = str_replace(' ', 'T', substr($appointment['appointment_date'], 0, 1
     </div>
 
     <div class="mb-3">
-        <label class="form-label">Appointment Date and Time</label>
+        <label class="form-label">تاريخ ووقت الموعد</label>
         <input type="datetime-local" name="appointment_date" class="form-control"
             value="<?= htmlspecialchars($dateValue) ?>" required>
     </div>
 
     <div class="mb-3">
-        <label class="form-label">Status</label>
+        <label class="form-label">الحالة</label>
         <select name="status" class="form-select">
-            <option value="scheduled" <?= $appointment['status'] === 'scheduled' ? 'selected' : '' ?>>Scheduled</option>
-            <option value="completed" <?= $appointment['status'] === 'completed' ? 'selected' : '' ?>>Completed</option>
-            <option value="cancelled" <?= $appointment['status'] === 'cancelled' ? 'selected' : '' ?>>Cancelled</option>
+            <?php foreach ($statusLabels as $value => $label): ?>
+                <option value="<?= $value ?>" <?= $appointment['status'] === $value ? 'selected' : '' ?>>
+                    <?= $label ?>
+                </option>
+            <?php endforeach; ?>
         </select>
     </div>
 
     <div class="mb-3">
-        <label class="form-label">Notes</label>
-        <textarea name="notes" class="form-control"><?= htmlspecialchars($appointment['notes']) ?></textarea>
+        <label class="form-label">ملاحظات</label>
+        <textarea name="notes" class="form-control"><?= htmlspecialchars((string) $appointment['notes']) ?></textarea>
     </div>
 
-    <button type="submit" class="btn btn-primary">Save Changes</button>
-    <a href="index.php" class="btn btn-secondary">Cancel</a>
+    <button type="submit" class="btn btn-primary">حفظ التعديلات</button>
+    <a href="index.php" class="btn btn-secondary">إلغاء</a>
 </form>
 
 <?php include_once '../includes/footer.php'; ?>
