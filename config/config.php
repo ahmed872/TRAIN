@@ -29,12 +29,28 @@ if (!defined('BASE_URL')) {
     if ($configuredBase !== false && $configuredBase !== '') {
         $base = '/' . trim(str_replace('\\', '/', $configuredBase), '/');
     } else {
-        $projectRoot = str_replace('\\', '/', (string) realpath(__DIR__ . '/..'));
-        $documentRoot = str_replace('\\', '/', rtrim((string) ($_SERVER['DOCUMENT_ROOT'] ?? ''), '/'));
+        $projectRoot = rtrim(str_replace('\\', '/', (string) realpath(__DIR__ . '/..')), '/');
+        $scriptFile  = str_replace('\\', '/', (string) ($_SERVER['SCRIPT_FILENAME'] ?? ''));
+        $scriptName  = str_replace('\\', '/', (string) ($_SERVER['SCRIPT_NAME'] ?? ''));
 
         $base = '';
-        if ($documentRoot !== '' && str_starts_with($projectRoot, $documentRoot)) {
-            $base = substr($projectRoot, strlen($documentRoot));
+
+        // نشوف الملف اللي بيتنفذ دلوقتي تحت جذر المشروع بكام مستوى، وبعدين
+        // نشيل نفس العدد من آخر SCRIPT_NAME. الطريقة دي مش بتعتمد على
+        // DOCUMENT_ROOT، وبالتالي ما بتتأثرش باختلاف حالة الأحرف في مسارات
+        // ويندوز (D: مقابل d:) اللي كانت بتخلي المسار يطلع فاضي وكل الروابط تبوظ.
+        if ($scriptFile !== '' && $scriptName !== '' && stripos($scriptFile, $projectRoot) === 0) {
+            $relative = trim(substr($scriptFile, strlen($projectRoot)), '/');
+            $depth    = $relative === '' ? 0 : substr_count($relative, '/') + 1;
+            $parts    = explode('/', trim($scriptName, '/'));
+            $keep     = max(0, count($parts) - $depth);
+            $base     = $keep === 0 ? '' : '/' . implode('/', array_slice($parts, 0, $keep));
+        } else {
+            // احتياطي: مقارنة بـ DOCUMENT_ROOT، بدون حساسية لحالة الأحرف
+            $documentRoot = rtrim(str_replace('\\', '/', (string) ($_SERVER['DOCUMENT_ROOT'] ?? '')), '/');
+            if ($documentRoot !== '' && stripos($projectRoot, $documentRoot) === 0) {
+                $base = substr($projectRoot, strlen($documentRoot));
+            }
         }
     }
 
