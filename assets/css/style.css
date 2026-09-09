@@ -1,0 +1,11 @@
+body {
+    font-family: "Segoe UI", Tahoma, sans-serif;
+}
+
+.navbar-brand {
+    font-weight: bold;
+}
+
+.table td, .table th {
+    vertical-align: middle;
+}
