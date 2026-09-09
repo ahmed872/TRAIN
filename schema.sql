@@ -58,6 +58,10 @@ CREATE TABLE IF NOT EXISTS patients (
 -- المواعيد
 -- القيد uq_doctor_slot هو اللي بيمنع الحجز المزدوج على مستوى قاعدة البيانات،
 -- عشان طلبين متزامنين ما يقدروش يتخطوا الفحص اللي في كود PHP.
+--
+-- العمود active_slot بيبقى 1 للموعد النشط و NULL للموعد الملغي. وبما إن قيم
+-- NULL بتتعامل كقيم مختلفة في الفهارس الفريدة، فده بيسمح بإعادة حجز نفس
+-- التوقيت بعد الإلغاء، ولسه بيمنع وجود موعدين نشطين في نفس التوقيت.
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS appointments (
     id               INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -67,8 +71,9 @@ CREATE TABLE IF NOT EXISTS appointments (
     status           ENUM('scheduled', 'completed', 'cancelled') NOT NULL DEFAULT 'scheduled',
     notes            TEXT NULL,
     created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    active_slot      TINYINT UNSIGNED AS (IF(status = 'cancelled', NULL, 1)) STORED,
     PRIMARY KEY (id),
-    UNIQUE KEY uq_doctor_slot (doctor_id, appointment_date),
+    UNIQUE KEY uq_doctor_slot (doctor_id, appointment_date, active_slot),
     KEY idx_appointments_patient (patient_id),
     KEY idx_appointments_date (appointment_date),
     CONSTRAINT fk_appointments_patient
